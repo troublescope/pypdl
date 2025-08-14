@@ -133,7 +133,7 @@ class Producer:
         header = await self._fetch_header(url, **kwargs)
         file_path = await get_filepath(url, header, file_path)
         if file_size := int(header.get("content-length", 0)):
-            self._logger.debug("File size acquired from header")
+            self._logger.debug("File size acquired from header: %s bytes", file_size)
 
         if multisegment and range_header:
             size = get_range(range_header, file_size)
@@ -155,15 +155,32 @@ class Producer:
         return url, file_path, multisegment, etag, size, kwargs
 
     async def _fetch_header(self, url, **kwargs):
+
+        kwargs.setdefault("allow_redirects", True)
+
+        
         try:
             async with self._session.head(url, **kwargs) as response:
                 if response.status < 400:
-                    self._logger.debug("Header acquired from HEAD request")
-                    return response.headers
-        except Exception:
-            pass
+                    content_length = response.headers.get("Content-Length")
+                    if content_length and int(content_length) > 0:
+                        self._logger.debug(
+                            f"Header acquired from HEAD request: size={content_length}"
+                        )
+                        return response.headers
+        except Exception as e:
+            self._logger.debug(f"HEAD request failed for {url}: {e}")
 
-        async with self._session.get(url, **kwargs) as response:
-            if response.status < 400:
-                self._logger.debug("Header acquired from GET request")
-                return response.headers
+        # Fallback to GET (headers only)
+        try:
+            async with self._session.get(url, **kwargs) as response:
+                if response.status < 400:
+                    content_length = response.headers.get("Content-Length")
+                    self._logger.debug(
+                        f"Header acquired from GET request: size={content_length or 'unknown'}"
+                    )
+                    return response.headers
+        except Exception as e:
+            self._logger.debug(f"GET request failed for {url}: {e}")
+
+        return {}
