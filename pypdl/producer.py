@@ -118,17 +118,20 @@ class Producer:
     async def _fetch_task_info(self, url, file_path, multisegment, **kwargs):
         url = await get_url(url)
 
-        user_headers = kwargs.get("headers", {})
+        # Always ensure headers is a dict
+        user_headers = kwargs.get("headers") or {}
         range_header = None
 
         if user_headers:
             _user_headers = user_headers.copy()
-            for key, value in user_headers.items():
+            for key, value in list(user_headers.items()):
                 if key.lower() == "range":
                     range_header = value
                     self._logger.debug("Range header found %s", range_header)
                     del _user_headers[key]
             kwargs["headers"] = _user_headers
+        else:
+            kwargs["headers"] = {}
 
         header = await self._fetch_header(url, **kwargs)
         file_path = await get_filepath(url, header, file_path)
@@ -150,15 +153,14 @@ class Producer:
             multisegment = False
 
         if not multisegment:
-            kwargs["headers"] = user_headers
+            kwargs["headers"] = user_headers or {}
 
         return url, file_path, multisegment, etag, size, kwargs
 
     async def _fetch_header(self, url, **kwargs):
-
         kwargs.setdefault("allow_redirects", True)
 
-        
+        # Try HEAD first
         try:
             async with self._session.head(url, **kwargs) as response:
                 if response.status < 400:
@@ -168,6 +170,10 @@ class Producer:
                             f"Header acquired from HEAD request: size={content_length}"
                         )
                         return response.headers
+                    else:
+                        self._logger.debug(
+                            "HEAD request succeeded but no Content-Length, retrying with GET"
+                        )
         except Exception as e:
             self._logger.debug(f"HEAD request failed for {url}: {e}")
 
